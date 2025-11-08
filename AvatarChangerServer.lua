@@ -1,39 +1,48 @@
 --// ServerScriptService.AvatarChangerServer
--- Server handler untuk AvatarCatalog (AvatarChangerClient)
--- Menangani:
---  - ChangeAvatarEvent: ganti avatar ke userId target
---  - ResetAvatarEvent : reset ke avatar default player
---  - AddAccessoryEvent: tambah aksesoris (assetId)
---  - RemoveAccessoryEvent: hapus aksesoris (assetId)
--- RemoteEvent DIHARAPKAN berada langsung di ReplicatedStorage
---   (sesuai yang di-WaitForChild di LocalScript)
+-- Versi AUTO-CREATE RemoteEvent (untuk project yang belum punya RemoteEvent sama sekali)
+-- Bekerja dengan AvatarChangerClient yang sudah kamu kirim:
+--   - ReplicatedStorage.ChangeAvatarEvent
+--   - ReplicatedStorage.ResetAvatarEvent
+--   - ReplicatedStorage.AddAccessoryEvent
+--   - ReplicatedStorage.RemoveAccessoryEvent
 
 local Players            = game:GetService("Players")
 local ReplicatedStorage  = game:GetService("ReplicatedStorage")
 local MarketplaceService = game:GetService("MarketplaceService")
 
----------------------------------------------------------------------
--- HELPERS
----------------------------------------------------------------------
+------------------------------------------------------------
+-- BUAT REMOTEEVENT DARI NOL
+------------------------------------------------------------
 
--- Pastikan RemoteEvent ada di ReplicatedStorage (kalau sudah ada, pakai yang itu)
-local function ensureRemoteEvent(name)
-    local ev = ReplicatedStorage:FindFirstChild(name)
-    if not ev then
-        ev = Instance.new("RemoteEvent")
-        ev.Name = name
-        ev.Parent = ReplicatedStorage
-        warn("[AvatarChangerServer] RemoteEvent '" .. name .. "' tidak ditemukan, membuat baru di ReplicatedStorage.")
+local function createRemote(name : string)
+    -- kalau ada sisa lama dengan nama sama, hapus dulu biar nggak dobel
+    local old = ReplicatedStorage:FindFirstChild(name)
+    if old and old:IsA("RemoteEvent") then
+        old:Destroy()
     end
+
+    local ev = Instance.new("RemoteEvent")
+    ev.Name = name
+    ev.Parent = ReplicatedStorage
     return ev
 end
 
-local ChangeAvatarEvent  = ensureRemoteEvent("ChangeAvatarEvent")
-local ResetAvatarEvent   = ensureRemoteEvent("ResetAvatarEvent")
-local AddAccessoryEvent  = ensureRemoteEvent("AddAccessoryEvent")
-local RemoveAccessoryEvent = ensureRemoteEvent("RemoveAccessoryEvent")
+local ChangeAvatarEvent    = createRemote("ChangeAvatarEvent")
+local ResetAvatarEvent     = createRemote("ResetAvatarEvent")
+local AddAccessoryEvent    = createRemote("AddAccessoryEvent")
+local RemoveAccessoryEvent = createRemote("RemoveAccessoryEvent")
 
--- Map AssetTypeId -> nama field di HumanoidDescription
+------------------------------------------------------------
+-- HELPER: Humanoid, AssetType mapping, dll
+------------------------------------------------------------
+
+local function getHumanoid(player : Player) : Humanoid?
+    local character = player.Character
+    if not character then return nil end
+    return character:FindFirstChildOfClass("Humanoid")
+end
+
+-- Map AssetTypeId -> field HumanoidDescription
 local ACC_FIELD_BY_TYPEID = {
     [Enum.AssetType.Hat.Value]               = "HatAccessory",
     [Enum.AssetType.HairAccessory.Value]     = "HairAccessory",
@@ -45,13 +54,12 @@ local ACC_FIELD_BY_TYPEID = {
     [Enum.AssetType.WaistAccessory.Value]    = "WaistAccessory",
 }
 
--- cache untuk mapping assetId -> field
-local AssetFieldCache = {}  -- [assetId] = fieldName / false
+-- cache assetId -> fieldName
+local AssetFieldCache : {[number]: string|false} = {}
 
 local function getFieldForAssetId(assetId : number) : string?
     local cached = AssetFieldCache[assetId]
     if cached ~= nil then
-        -- bisa string (fieldName) atau false (tidak valid)
         return cached or nil
     end
 
@@ -62,15 +70,8 @@ local function getFieldForAssetId(assetId : number) : string?
         fieldName = ACC_FIELD_BY_TYPEID[info.AssetTypeId]
     end
 
-    -- kalau fieldName nil, simpan false supaya nggak request terus
     AssetFieldCache[assetId] = fieldName or false
     return fieldName
-end
-
-local function getHumanoid(player : Player) : Humanoid?
-    local character = player.Character
-    if not character then return nil end
-    return character:FindFirstChildOfClass("Humanoid")
 end
 
 -- "1,2,3" -> {1,2,3}
@@ -97,20 +98,17 @@ local function joinIds(t : {number})
     return table.concat(parts, ",")
 end
 
--- Tambah assetId ke field (kalau belum ada)
 local function addAccessoryId(desc : HumanoidDescription, fieldName : string, assetId : number)
     local current = splitIds(desc[fieldName])
     for _, v in ipairs(current) do
         if v == assetId then
-            -- sudah ada, tidak perlu apa-apa
-            return
+            return -- sudah ada
         end
     end
     table.insert(current, assetId)
     desc[fieldName] = joinIds(current)
 end
 
--- Hapus assetId dari field (kalau ada)
 local function removeAccessoryId(desc : HumanoidDescription, fieldName : string, assetId : number)
     local current = splitIds(desc[fieldName])
     local changed = false
@@ -127,9 +125,9 @@ local function removeAccessoryId(desc : HumanoidDescription, fieldName : string,
     end
 end
 
----------------------------------------------------------------------
--- HANDLER: Ganti Avatar
----------------------------------------------------------------------
+------------------------------------------------------------
+-- HANDLER: GANTI AVATAR (ChangeAvatarEvent)
+------------------------------------------------------------
 
 ChangeAvatarEvent.OnServerEvent:Connect(function(player, targetUserId)
     if typeof(targetUserId) ~= "number" then
@@ -141,7 +139,7 @@ ChangeAvatarEvent.OnServerEvent:Connect(function(player, targetUserId)
         return
     end
 
-    -- Ambil HumanoidDescription dari userId target (Boys/Girls list)
+    -- Ambil HumanoidDescription dari userId target (Boys/Girls list di client)
     local ok, desc = pcall(function()
         return Players:GetHumanoidDescriptionFromUserId(targetUserId)
     end)
@@ -151,13 +149,12 @@ ChangeAvatarEvent.OnServerEvent:Connect(function(player, targetUserId)
         return
     end
 
-    -- Apply ke humanoid player
     humanoid:ApplyDescription(desc)
 end)
 
----------------------------------------------------------------------
--- HANDLER: Reset Avatar ke default player
----------------------------------------------------------------------
+------------------------------------------------------------
+-- HANDLER: RESET AVATAR (ResetAvatarEvent)
+------------------------------------------------------------
 
 ResetAvatarEvent.OnServerEvent:Connect(function(player)
     local humanoid = getHumanoid(player)
@@ -177,9 +174,9 @@ ResetAvatarEvent.OnServerEvent:Connect(function(player)
     humanoid:ApplyDescription(desc)
 end)
 
----------------------------------------------------------------------
--- HANDLER: Tambah Aksesoris
----------------------------------------------------------------------
+------------------------------------------------------------
+-- HANDLER: TAMBAH AKSESORIS (AddAccessoryEvent)
+------------------------------------------------------------
 
 AddAccessoryEvent.OnServerEvent:Connect(function(player, assetId)
     if typeof(assetId) ~= "number" then
@@ -202,9 +199,9 @@ AddAccessoryEvent.OnServerEvent:Connect(function(player, assetId)
     humanoid:ApplyDescription(desc)
 end)
 
----------------------------------------------------------------------
--- HANDLER: Hapus Aksesoris
----------------------------------------------------------------------
+------------------------------------------------------------
+-- HANDLER: HAPUS AKSESORIS (RemoveAccessoryEvent)
+------------------------------------------------------------
 
 RemoveAccessoryEvent.OnServerEvent:Connect(function(player, assetId)
     if typeof(assetId) ~= "number" then
@@ -227,4 +224,4 @@ RemoveAccessoryEvent.OnServerEvent:Connect(function(player, assetId)
     humanoid:ApplyDescription(desc)
 end)
 
-print("[AvatarChangerServer] Ready: ChangeAvatarEvent, ResetAvatarEvent, AddAccessoryEvent, RemoveAccessoryEvent aktif.")
+print("[AvatarChangerServer] Ready (AUTO-CREATE RemoteEvents di ReplicatedStorage).")
