@@ -1,0 +1,85 @@
+-- ServerScriptService.axaserver.txt
+-- Server-side pengganti avatar berdasarkan username
+
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+-- Remote untuk minta ganti avatar
+local ApplyAvatarRemote = ReplicatedStorage:FindFirstChild("AxaApplyAvatar")
+if not ApplyAvatarRemote then
+    ApplyAvatarRemote = Instance.new("RemoteEvent")
+    ApplyAvatarRemote.Name = "AxaApplyAvatar"
+    ApplyAvatarRemote.Parent = ReplicatedStorage
+end
+
+-- Remote hasil (biar client bisa update status UI)
+local ApplyAvatarResult = ReplicatedStorage:FindFirstChild("AxaApplyAvatarResult")
+if not ApplyAvatarResult then
+    ApplyAvatarResult = Instance.new("RemoteEvent")
+    ApplyAvatarResult.Name = "AxaApplyAvatarResult"
+    ApplyAvatarResult.Parent = ReplicatedStorage
+end
+
+local function sendResult(player, ok, message)
+    -- kirim balik ke player peminta
+    ApplyAvatarResult:FireClient(player, ok, message)
+end
+
+local function onApplyAvatar(player, username)
+    if typeof(username) ~= "string" or username == "" then
+        sendResult(player, false, "Username tidak boleh kosong!")
+        return
+    end
+
+    -- Cari userId dari username
+    local okUser, userId = pcall(function()
+        return Players:GetUserIdFromNameAsync(username)
+    end)
+    if not okUser then
+        sendResult(player, false, "Username tidak ditemukan: " .. username)
+        return
+    end
+
+    -- Ambil HumanoidDescription target
+    local okDesc, humanoidDesc = pcall(function()
+        return Players:GetHumanoidDescriptionFromUserId(userId)
+    end)
+    if not okDesc then
+        sendResult(player, false, "Gagal mendapatkan avatar dari server.")
+        return
+    end
+
+    local character = player.Character
+    if not character then
+        sendResult(player, false, "Character tidak ditemukan.")
+        return
+    end
+
+    local humanoid = character:FindFirstChildOfClass("Humanoid")
+    if not humanoid then
+        sendResult(player, false, "Humanoid tidak ditemukan.")
+        return
+    end
+
+    -- Bersihkan aksesoris / baju lama biar nggak numpuk
+    for _, item in ipairs(character:GetChildren()) do
+        if item:IsA("Accessory") or item:IsA("Shirt") or item:IsA("Pants") or item:IsA("ShirtGraphic") then
+            item:Destroy()
+        end
+    end
+
+    -- Terapkan avatar baru di server (kelihatan untuk semua pemain)
+    local okApply, err = pcall(function()
+        humanoid:ApplyDescription(humanoidDesc)
+    end)
+
+    if not okApply then
+        warn("[Axa Avatar] ApplyDescription error:", err)
+        sendResult(player, false, "Gagal mengubah avatar (server error).")
+        return
+    end
+
+    sendResult(player, true, "Avatar berhasil diubah ke: " .. username)
+end
+
+ApplyAvatarRemote.OnServerEvent:Connect(onApplyAvatar)
